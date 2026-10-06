@@ -1,6 +1,6 @@
 <template>
   <div>
-    <h1>分批入库 · 合并预览条数谎报</h1>
+    <h1>分批入库</h1>
     <select v-model.number="item_id"><option v-for="i in items" :value="i.id">{{ i.name }}</option></select>
     <input type="number" v-model.number="qty" placeholder="数量" />
     <input v-model="expiry" placeholder="到期 YYYY-MM-DD" />
@@ -17,6 +17,7 @@ const expiry = ref('2026-12-01')
 onMounted(async () => { items.value = await api('/items'); if (items.value[0]) item_id.value = items.value[0].id })
 async function go() {
   await api('/lots', { method: 'POST', body: JSON.stringify({ item_id: item_id.value, qty: qty.value, expiry: expiry.value }) })
+  window.dispatchEvent(new Event('pantry:changed'))
   alert('已入库')
 }
 </script>

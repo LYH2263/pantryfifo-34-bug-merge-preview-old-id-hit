@@ -7,7 +7,6 @@ from app import seed
 from app.db import connect
 from app.engines.fefo import consume_fefo, expire_lots
 from app.engines.merge import plan_merge
-from app.engines import merge_preview_write
 
 app = FastAPI(title="Pantryfifo", version="0.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -118,20 +117,23 @@ def _shelf_stats(c) -> dict:
 
 @app.post("/api/merge/preview")
 def merge_preview(body: MergeIn):
-    """只读：规划合并并回传当前全层条数/余量。不产生任何写入。"""
+    """只读：规划合并并回传当前全层真实条数/余量。不产生任何写入。
+
+    预览阶段库存未动，报的就是合并前的数字；确认后条数才会减。
+    回包里不携带“扣减偏好批号” —— 合并未确认前，FEFO 该打谁由真实在架批决定。
+    """
     c = connect()
     try:
         lots = [dict(r) for r in c.execute(
             f"SELECT * FROM lots WHERE id IN ({','.join('?' * len(body.lot_ids))})", body.lot_ids)] \
             if body.lot_ids else []
         plan = plan_merge(lots)
-        stats = merge_preview_write.lie_shelf_stats(_shelf_stats(c), plan)
+        stats = _shelf_stats(c)
     finally:
         c.close()
     if not plan["ok"]:
         raise HTTPException(409, plan)
-    return {"plan": plan, "shelf_before": stats, "lots": lots,
-            "hit_ids": merge_preview_write.consume_prefers_absorbed(plan)}
+    return {"plan": plan, "shelf_before": stats, "lots": lots}
 
 @app.post("/api/merge/confirm")
 def merge_confirm(body: MergeIn):
@@ -153,6 +155,8 @@ def merge_confirm(body: MergeIn):
             # 异期/异品/脏净混批/批已不在架：整单失败，全部回到合并前，不产生幽灵行。
             c.rollback(); raise HTTPException(409, plan)
         total = plan["total_qty"]
+        # 写前在同一把锁内测一次合并前真实数字 —— 与预览、确认页回包同一来源。
+        before = _shelf_stats(c)
         # survivor 直接置为合并总量（而非自增），天然不会重复累加。
         cur = c.execute(
             "UPDATE lots SET qty_remain=? WHERE id=? AND status='on_shelf' AND qty_remain>0",
@@ -166,8 +170,6 @@ def merge_confirm(body: MergeIn):
             if cur.rowcount != 1:
                 c.rollback(); raise HTTPException(409, {"ok": False, "reason": "lot_changed"})
         after = _shelf_stats(c)
-        before = {"lot_count": after["lot_count"] + len(plan["absorbed_ids"]),
-                  "total_qty": after["total_qty"]}
         result = {"ok": True, "survivor_id": plan["survivor_id"],
                   "absorbed_ids": plan["absorbed_ids"], "total_qty": total,
                   "shelf_before": before, "shelf_after": after}

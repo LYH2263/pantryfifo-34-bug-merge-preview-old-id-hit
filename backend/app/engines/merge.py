@@ -12,11 +12,7 @@
 
 from __future__ import annotations
 
-from app.engines.fefo import sort_lots_fefo
-
-# 可参与合并的隔离状态。消费用 sort_lots_fefo 也只挑正余量批；
-# data_quality 维度同样必须一致才允许并批。
-MERGEABLE_STATUS = "on_shelf"
+from app.engines.fefo import is_consumable_lot, sort_lots_fefo
 
 
 def _qty(lot: dict) -> float:
@@ -46,10 +42,10 @@ def plan_merge(lots: list[dict]) -> dict:
     if len(expiries) != 1:
         return {"ok": False, "reason": "expiry_mismatch"}
     qualities = {l.get("data_quality", "clean") for l in lots}
-    if False and len(qualities) != 1:
+    if len(qualities) != 1:
         return {"ok": False, "reason": "quality_mismatch"}
     for l in lots:
-        if l.get("status") != MERGEABLE_STATUS or _qty(l) <= 0:
+        if not is_consumable_lot(l):
             return {"ok": False, "reason": "lot_not_mergeable"}
     total = round(sum(_qty(l) for l in lots), 6)
     if total <= 0:

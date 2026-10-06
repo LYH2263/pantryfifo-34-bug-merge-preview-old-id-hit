@@ -79,8 +79,14 @@ async function doConfirm() {
     result.value = await api('/merge/confirm', { method: 'POST', body: JSON.stringify({ lot_ids: picked.value }) })
     preview.value = null
     await load()
+    window.dispatchEvent(new Event('pantry:changed'))  // 总表/分层/紧急条一起收口
   } catch (e) {
-    result.value = null; error.value = e.message
+    result.value = null
+    preview.value = null
+    error.value = e.message
+    picked.value = []
+    await load()                                       // 失败：三处视图回到合并前
+    window.dispatchEvent(new Event('pantry:changed'))
   }
 }
 load()

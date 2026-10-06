@@ -18,8 +18,20 @@
   </div>
 </template>
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
+import { useRoute } from 'vue-router'
 import { api } from './api'
 const alerts = ref([])
-onMounted(async () => { try { alerts.value = await api('/alerts') } catch { alerts.value = [] } })
+const route = useRoute()
+async function loadAlerts() {
+  try { alerts.value = await api('/alerts') } catch { alerts.value = [] }
+}
+// 合并确认/消费/下架后紧急条必须与总表一起收口；切页也重取，避免停在旧状态。
+function onChange() { loadAlerts() }
+onMounted(() => {
+  loadAlerts()
+  window.addEventListener('pantry:changed', onChange)
+})
+onBeforeUnmount(() => window.removeEventListener('pantry:changed', onChange))
+watch(() => route.fullPath, loadAlerts)
 </script>
