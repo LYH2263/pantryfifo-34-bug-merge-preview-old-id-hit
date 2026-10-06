@@ -1,6 +1,6 @@
 <template>
   <div>
-    <h1>{{ props.layer }} 层 · 合并预览条数谎报</h1>
+    <h1>{{ props.layer }} 层</h1>
     <span v-for="x in rows" :key="x.id" class="lot">{{ x.name }} ×{{ x.qty_remain }} · {{ x.expiry }}</span>
   </div>
 </template>

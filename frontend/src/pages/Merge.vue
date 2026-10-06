@@ -22,7 +22,9 @@
       <h3>预览（库存未改动）</h3>
       <p>留存 lot #{{ preview.plan.survivor_id }}，吞掉 lot #{{ preview.plan.absorbed_ids.join('、#') }}；
          合并后余量 <b>{{ preview.plan.total_qty }}</b>。</p>
-      <p>全层条数 <b>{{ preview.shelf_before.lot_count }}</b>、余量合计 <b>{{ preview.shelf_before.total_qty }}</b> —— 预览时均不变。</p>
+      <p>全层条数 <b>{{ preview.shelf_before.lot_count }}</b>、余量合计 <b>{{ preview.shelf_before.total_qty }}</b>
+         —— 预览时均不变，确认后条数 -{{ preview.plan.absorbed_ids.length }}。</p>
+      <p>确认后按临期消费打到留下的 lot #{{ preview.hit_ids[0] }}。</p>
     </div>
     <div v-if="result" class="shelf" style="margin-top:12px">
       <h3>合并结果</h3>
@@ -36,7 +38,9 @@
 </template>
 <script setup>
 import { ref, computed } from 'vue'
+import { useRoute } from 'vue-router'
 import { api } from '../api'
+const route = useRoute()
 const rows = ref([])
 const picked = ref([])
 const preview = ref(null)
@@ -58,8 +62,20 @@ const groups = computed(() => {
 
 async function load() {
   rows.value = await api('/fridge')
-  picked.value = []
-  preview.value = null
+  const valid = new Set(rows.value.map(r => r.id))
+  // 已被吞掉/下架的 id 不再保留在选中里，避免拿旧身份再发起。
+  picked.value = picked.value.filter(id => valid.has(id))
+  applyQueryPicks(valid)
+}
+function applyQueryPicks(valid) {
+  // 从总表带参发起：/merge?lots=1,2 —— 只预选仍在架的批。
+  const q = route.query.lots
+  if (!q) return
+  const ids = String(q).split(',').map(Number).filter(Boolean).filter(id => valid.has(id))
+  if (ids.length >= 2) {
+    picked.value = ids
+    preview.value = null; result.value = null; error.value = ''
+  }
 }
 function pickGroup(g) {
   picked.value = g.lots.map(l => l.id)
@@ -81,6 +97,7 @@ async function doConfirm() {
     await load()
   } catch (e) {
     result.value = null; error.value = e.message
+    await load()
   }
 }
 load()

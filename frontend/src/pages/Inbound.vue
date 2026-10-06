@@ -1,6 +1,6 @@
 <template>
   <div>
-    <h1>分批入库 · 合并预览条数谎报</h1>
+    <h1>分批入库</h1>
     <select v-model.number="item_id"><option v-for="i in items" :value="i.id">{{ i.name }}</option></select>
     <input type="number" v-model.number="qty" placeholder="数量" />
     <input v-model="expiry" placeholder="到期 YYYY-MM-DD" />

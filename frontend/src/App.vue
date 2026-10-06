@@ -18,8 +18,13 @@
   </div>
 </template>
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { api } from './api'
 const alerts = ref([])
-onMounted(async () => { try { alerts.value = await api('/alerts') } catch { alerts.value = [] } })
+const route = useRoute()
+async function loadAlerts() { try { alerts.value = await api('/alerts') } catch { alerts.value = [] } }
+// 合并/消费/入库后切换页面时预警带跟着刷新，紧急条与总表保持同一口径。
+watch(() => route.fullPath, loadAlerts)
+onMounted(loadAlerts)
 </script>

@@ -1,5 +1,13 @@
 """FEFO consume: earliest expiry first among positive remaining lots."""
 
+def is_deduction_candidate(lot: dict) -> bool:
+    """扣减候选门：在架且正余量。
+
+    合并资格复用同一套门（见 engines.merge）：过不了这道门的批
+    既不能进扣减候选，也不能进合并候选。
+    """
+    return lot.get("status") == "on_shelf" and float(lot.get("qty_remain", 0)) > 0
+
 def sort_lots_fefo(lots: list[dict]) -> list[dict]:
     return sorted(
         [l for l in lots if float(l.get("qty_remain", 0)) > 0],

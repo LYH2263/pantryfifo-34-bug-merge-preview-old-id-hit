@@ -1,4 +1,5 @@
 import json
+import sqlite3
 from datetime import date, datetime, timezone
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,7 +8,6 @@ from app import seed
 from app.db import connect
 from app.engines.fefo import consume_fefo, expire_lots
 from app.engines.merge import plan_merge
-from app.engines import merge_preview_write
 
 app = FastAPI(title="Pantryfifo", version="0.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -109,6 +109,11 @@ def consume(body: ConsumeIn):
 class MergeIn(BaseModel):
     lot_ids: list[int]
 
+def _reject_duplicate_ids(ids: list[int]):
+    # 同一条被选两次：来源不可信，直接拒掉，避免余量被重复计入。
+    if len(set(ids)) != len(ids):
+        raise HTTPException(409, {"ok": False, "reason": "duplicate_lot"})
+
 def _merge_group_key(ids: list[int]) -> str:
     return ",".join(str(i) for i in sorted(ids))
 
@@ -118,23 +123,27 @@ def _shelf_stats(c) -> dict:
 
 @app.post("/api/merge/preview")
 def merge_preview(body: MergeIn):
-    """只读：规划合并并回传当前全层条数/余量。不产生任何写入。"""
+    """只读：规划合并并回传当前全层条数/余量。不产生任何写入，条数按合并前如实报。"""
+    _reject_duplicate_ids(body.lot_ids)
     c = connect()
     try:
         lots = [dict(r) for r in c.execute(
             f"SELECT * FROM lots WHERE id IN ({','.join('?' * len(body.lot_ids))})", body.lot_ids)] \
             if body.lot_ids else []
         plan = plan_merge(lots)
-        stats = merge_preview_write.lie_shelf_stats(_shelf_stats(c), plan)
+        stats = _shelf_stats(c)
     finally:
         c.close()
     if not plan["ok"]:
         raise HTTPException(409, plan)
+    # 三处数字对同一批：页上条数 = 当前真实条数（预览不动），
+    # 扣减打的号 = 留下的 survivor，收走列 = absorbed_ids。
     return {"plan": plan, "shelf_before": stats, "lots": lots,
-            "hit_ids": merge_preview_write.consume_prefers_absorbed(plan)}
+            "hit_ids": [plan["survivor_id"]]}
 
 @app.post("/api/merge/confirm")
 def merge_confirm(body: MergeIn):
+    _reject_duplicate_ids(body.lot_ids)
     c = connect()
     try:
         # 写锁内重读，与消费互斥：先拿锁的一方决定最终状态，后到方按新状态重规划。
@@ -170,6 +179,7 @@ def merge_confirm(body: MergeIn):
                   "total_qty": after["total_qty"]}
         result = {"ok": True, "survivor_id": plan["survivor_id"],
                   "absorbed_ids": plan["absorbed_ids"], "total_qty": total,
+                  "hit_ids": [plan["survivor_id"]],
                   "shelf_before": before, "shelf_after": after}
         try:
             c.execute(
@@ -177,11 +187,13 @@ def merge_confirm(body: MergeIn):
                 "VALUES (?,?,?,?,?,?)",
                 (plan["survivor_id"], json.dumps(plan["absorbed_ids"]), total, key,
                  json.dumps(result), datetime.now(timezone.utc).isoformat()))
-        except Exception:
+        except sqlite3.IntegrityError:
             # 并发同组确认抢先落库：放弃本次写入，回放已存在的结果。
             c.rollback()
             row = c.execute("SELECT result_json FROM merges WHERE group_key=?", (key,)).fetchone()
-            return {**json.loads(row["result_json"]), "idempotent": True}
+            if row:
+                return {**json.loads(row["result_json"]), "idempotent": True}
+            raise HTTPException(409, {"ok": False, "reason": "merge_conflict"})
         c.commit()
     finally:
         c.close()
